@@ -525,8 +525,9 @@
     }
 
     // ===== Helpers Firestore ===== //
-    const docMonth = (m) => doc(db, 'users', state.uid, 'meses', m);
-    const docCfg = () => doc(db, 'users', state.uid, 'config', 'main');
+    const FIRESTORE_ROOT = 'pessoal';
+    const docMonth = (m) => doc(db, FIRESTORE_ROOT, state.uid, 'meses', m);
+    const docCfg = () => doc(db, FIRESTORE_ROOT, state.uid, 'config', 'main');
 
     function monthContas(){ return state.contas[state.month] ?? (state.contas[state.month] = []); }
     function monthReceitas(){ return state.receitas[state.month] ?? (state.receitas[state.month] = []); }
