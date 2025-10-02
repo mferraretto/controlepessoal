@@ -331,6 +331,9 @@
       write(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
     }
 
+    const LOCAL_MONTHS_KEY = 'financeiro_meses_v1';
+    const LOCAL_RECORRENTES_KEY = 'financeiro_recorrentes_v1';
+
     const cfg = {
       get locale(){ return cfgLocal.read('cfg_locale', 'pt-BR') },
       set locale(v){ cfgLocal.write('cfg_locale', v) },
@@ -345,6 +348,8 @@
     const todayISO = () => new Date().toISOString().slice(0,10);
 
     // ===== Estado principal ===== //
+    let useFirebase = true;
+
     const state = {
       uid: null,
       month: yyyymm(new Date()),
@@ -363,19 +368,37 @@
     function monthOrcamentos(){ return state.orcamentos[state.month] ?? (state.orcamentos[state.month] = []); }
 
     async function loadConfig(){
+      if(!useFirebase){
+        state.recorrentes = cfgLocal.read(LOCAL_RECORRENTES_KEY, state.recorrentes || []);
+        return;
+      }
       const snap = await getDoc(docCfg());
       if(snap.exists()){
         const c = snap.data();
         if(c.locale) cfg.locale = c.locale;
         if(c.currency) cfg.currency = c.currency;
         if(c.categorias) cfg.categorias = c.categorias;
+        if(Array.isArray(c.recorrentes)) state.recorrentes = c.recorrentes;
       }
     }
     async function saveConfig(){
-      await setDoc(docCfg(), { locale: cfg.locale, currency: cfg.currency, categorias: cfg.categorias }, { merge: true });
+      if(!useFirebase){
+        cfgLocal.write(LOCAL_RECORRENTES_KEY, state.recorrentes);
+        return;
+      }
+      await setDoc(docCfg(), { locale: cfg.locale, currency: cfg.currency, categorias: cfg.categorias, recorrentes: state.recorrentes }, { merge: true });
     }
 
     async function loadMonth(m){
+      if(!useFirebase){
+        const todos = cfgLocal.read(LOCAL_MONTHS_KEY, {});
+        const d = todos[m] || {};
+        state.contas[m] = d.contas || state.contas[m] || [];
+        state.receitas[m] = d.receitas || state.receitas[m] || [];
+        state.orcamentos[m] = d.orcamentos || state.orcamentos[m] || [];
+        state.recorrentes = cfgLocal.read(LOCAL_RECORRENTES_KEY, state.recorrentes || []);
+        return;
+      }
       const snap = await getDoc(docMonth(m));
       if(snap.exists()){
         const d = snap.data();
@@ -391,6 +414,17 @@
     }
     async function saveMonth(){
       const m = state.month;
+      if(!useFirebase){
+        const todos = cfgLocal.read(LOCAL_MONTHS_KEY, {});
+        todos[m] = {
+          contas: monthContas(),
+          receitas: monthReceitas(),
+          orcamentos: monthOrcamentos()
+        };
+        cfgLocal.write(LOCAL_MONTHS_KEY, todos);
+        cfgLocal.write(LOCAL_RECORRENTES_KEY, state.recorrentes);
+        return;
+      }
       await setDoc(docMonth(m), {
         contas: monthContas(),
         receitas: monthReceitas(),
@@ -641,13 +675,26 @@
 
     // ===== Inicialização com Auth Anônima ===== //
     (async function init(){
-      const cred = await signInAnonymously(auth); state.uid = cred.user.uid;
-      await loadConfig();
-      const m = yyyymm(new Date()); await loadMonth(m);
-      // Realtime sync do mês atual
-      onSnapshot(docMonth(m), (snap)=>{ if(!snap.exists()) return; const d = snap.data(); state.contas[m] = d.contas||[]; state.receitas[m] = d.receitas||[]; state.orcamentos[m] = d.orcamentos||[]; state.recorrentes = d.recorrentes||state.recorrentes; renderAll(); });
-      // UI
+      const m = yyyymm(new Date());
+      try {
+        const cred = await signInAnonymously(auth); state.uid = cred.user.uid;
+        await loadConfig();
+        await loadMonth(m);
+        onSnapshot(docMonth(m), (snap)=>{ if(!snap.exists()) return; const d = snap.data(); state.contas[m] = d.contas||[]; state.receitas[m] = d.receitas||[]; state.orcamentos[m] = d.orcamentos||[]; state.recorrentes = d.recorrentes||state.recorrentes; renderAll(); });
+      } catch(err){
+        console.warn('Firebase indisponível, usando armazenamento local.', err);
+        useFirebase = false;
+        state.uid = 'local';
+        await loadConfig();
+        await loadMonth(m);
+      }
       document.querySelector('#relIni').value = m; document.querySelector('#relFim').value = m; setMonth(m); loadCfgUI(); activateTab('dashboard');
+      if(!useFirebase){
+        const aviso = document.createElement('div');
+        aviso.className = 'mx-auto max-w-3xl mb-4 px-4 py-3 rounded-xl bg-amber-100 border border-amber-300 text-amber-900 text-sm';
+        aviso.innerHTML = 'Não foi possível conectar ao Firebase. Os dados serão mantidos apenas neste navegador.';
+        document.querySelector('main').prepend(aviso);
+      }
     })();
   </script>
 </body>
