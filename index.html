@@ -16,6 +16,48 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
+  <!-- Auth overlay -->
+  <div id="authOverlay" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-2xl shadow-soft w-full max-w-md p-6 space-y-5">
+      <div class="text-center space-y-1">
+        <h2 class="text-2xl font-semibold">Acesse sua conta</h2>
+        <p class="text-sm text-slate-500">Conecte-se com e-mail e senha para sincronizar seus dados.</p>
+      </div>
+      <div id="authError" class="hidden text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2"></div>
+      <form id="formLogin" class="space-y-3">
+        <div class="space-y-1">
+          <label for="loginEmail" class="text-sm text-slate-600">E-mail</label>
+          <input id="loginEmail" type="email" required class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" autocomplete="email" />
+        </div>
+        <div class="space-y-1">
+          <label for="loginPassword" class="text-sm text-slate-600">Senha</label>
+          <input id="loginPassword" type="password" required class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" autocomplete="current-password" />
+        </div>
+        <button type="submit" class="w-full px-3 py-2 rounded-xl bg-primary-600 text-white font-medium" data-submit="login">Entrar</button>
+      </form>
+      <form id="formRegister" class="space-y-3 hidden">
+        <div class="space-y-1">
+          <label for="registerEmail" class="text-sm text-slate-600">E-mail</label>
+          <input id="registerEmail" type="email" required class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" autocomplete="email" />
+        </div>
+        <div class="space-y-1">
+          <label for="registerPassword" class="text-sm text-slate-600">Senha</label>
+          <input id="registerPassword" type="password" minlength="6" required class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" autocomplete="new-password" />
+          <p class="text-xs text-slate-500">Mínimo de 6 caracteres.</p>
+        </div>
+        <button type="submit" class="w-full px-3 py-2 rounded-xl bg-primary-600 text-white font-medium" data-submit="register">Criar conta</button>
+      </form>
+      <div class="text-sm text-slate-600 space-y-2">
+        <p id="linkToRegister">Ainda não tem conta? <button type="button" class="text-primary-600 font-medium" data-action="show-register">Criar conta</button></p>
+        <p id="linkToLogin" class="hidden">Já possui uma conta? <button type="button" class="text-primary-600 font-medium" data-action="show-login">Fazer login</button></p>
+      </div>
+      <div class="border-t border-slate-200 pt-4 text-center text-sm text-slate-500">
+        <p>Sem conta agora? Você pode usar o aplicativo no modo local.</p>
+        <button id="btnModoLocal" type="button" class="mt-2 w-full px-3 py-2 rounded-xl border border-slate-300">Usar modo local</button>
+      </div>
+    </div>
+  </div>
+
   <!-- App Wrapper -->
   <div id="app" class="min-h-screen grid grid-cols-1 lg:grid-cols-[260px_1fr]">
     <!-- Sidebar -->
@@ -35,6 +77,13 @@
         <button data-tab="relatorios" class="tab-btn w-full text-left px-3 py-2 rounded-xl hover:bg-primary-50 hover:text-primary-700 font-medium flex items-center gap-2">📈 <span>Relatórios</span></button>
         <button data-tab="config" class="tab-btn w-full text-left px-3 py-2 rounded-xl hover:bg-primary-50 hover:text-primary-700 font-medium flex items-center gap-2">⚙️ <span>Configurações</span></button>
       </nav>
+      <div id="userBadge" class="mt-8 hidden p-3 rounded-xl bg-slate-100 text-xs text-slate-600 space-y-2">
+        <div>
+          <p class="font-semibold text-slate-700">Conectado</p>
+          <p id="userEmail" class="break-all"></p>
+        </div>
+        <button id="btnLogout" type="button" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-700">Sair</button>
+      </div>
       <div class="mt-8 p-3 rounded-xl bg-slate-100 text-xs text-slate-600">
         <p class="font-semibold mb-1">Dica</p>
         <p>Os dados ficam salvos no seu navegador (localStorage). Use Exportar para backup.</p>
@@ -304,7 +353,7 @@
   <script type="module">
     // ===== Firebase (modular v10 CDN) ===== //
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
-    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, onSnapshot, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -357,6 +406,171 @@
       receitas: {},
       orcamentos: {},
       recorrentes: []
+    }
+
+    let unsubscribeMonth = null;
+    let manualLocalMode = false;
+    let currentAuthUid = null;
+
+    const authOverlay = $('#authOverlay');
+    const formLogin = $('#formLogin');
+    const formRegister = $('#formRegister');
+    const authErrorBox = $('#authError');
+    const linkToRegister = $('#linkToRegister');
+    const linkToLogin = $('#linkToLogin');
+    const btnModoLocal = $('#btnModoLocal');
+    const userBadge = $('#userBadge');
+    const userEmailLabel = $('#userEmail');
+    const btnLogout = $('#btnLogout');
+    const btnShowRegister = linkToRegister?.querySelector('[data-action="show-register"]');
+    const btnShowLogin = linkToLogin?.querySelector('[data-action="show-login"]');
+
+    function resetStateData(){
+      state.contas = {};
+      state.receitas = {};
+      state.orcamentos = {};
+      state.recorrentes = [];
+    }
+
+    function toggleAuthOverlay(show){
+      if(!authOverlay) return;
+      authOverlay.classList.toggle('hidden', !show);
+    }
+
+    function setAuthError(message){
+      if(!authErrorBox) return;
+      if(message){
+        authErrorBox.textContent = message;
+        authErrorBox.classList.remove('hidden');
+      } else {
+        authErrorBox.textContent = '';
+        authErrorBox.classList.add('hidden');
+      }
+    }
+
+    function translateAuthError(err){
+      const code = err?.code || '';
+      switch(code){
+        case 'auth/invalid-email': return 'E-mail inválido.';
+        case 'auth/missing-password':
+        case 'auth/weak-password': return 'Informe uma senha com pelo menos 6 caracteres.';
+        case 'auth/user-not-found': return 'Usuário não encontrado.';
+        case 'auth/wrong-password': return 'Senha incorreta.';
+        case 'auth/email-already-in-use': return 'Este e-mail já está em uso.';
+        case 'auth/too-many-requests': return 'Muitas tentativas. Aguarde e tente novamente.';
+        case 'auth/network-request-failed': return 'Falha de rede. Verifique sua conexão.';
+        default: return err?.message || 'Não foi possível concluir a operação.';
+      }
+    }
+
+    function switchAuthMode(mode){
+      if(mode === 'register'){
+        formLogin?.classList.add('hidden');
+        formRegister?.classList.remove('hidden');
+        linkToRegister?.classList.add('hidden');
+        linkToLogin?.classList.remove('hidden');
+      } else {
+        formLogin?.classList.remove('hidden');
+        formRegister?.classList.add('hidden');
+        linkToRegister?.classList.remove('hidden');
+        linkToLogin?.classList.add('hidden');
+      }
+      setAuthError('');
+    }
+
+    function updateUserBadge(user){
+      if(!userBadge) return;
+      if(user){
+        userBadge.classList.remove('hidden');
+        userEmailLabel.textContent = user.email || 'Conta conectada';
+      } else {
+        userBadge.classList.add('hidden');
+        userEmailLabel.textContent = '';
+      }
+    }
+
+    function showLocalWarning(){
+      const main = document.querySelector('main');
+      if(!main) return;
+      if(document.querySelector('#firebaseWarning')) return;
+      const aviso = document.createElement('div');
+      aviso.id = 'firebaseWarning';
+      aviso.className = 'mx-auto max-w-3xl mb-4 px-4 py-3 rounded-xl bg-amber-100 border border-amber-300 text-amber-900 text-sm';
+      const texto = document.createElement('p');
+      texto.textContent = 'Não foi possível conectar ao Firebase. Os dados serão mantidos apenas neste navegador.';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Conectar ao Firebase';
+      btn.className = 'px-3 py-2 rounded-xl bg-primary-600 text-white';
+      btn.style.marginTop = '0.5rem';
+      btn.addEventListener('click', () => {
+        manualLocalMode = false;
+        useFirebase = true;
+        switchAuthMode('login');
+        setAuthError('');
+        toggleAuthOverlay(true);
+      });
+      aviso.appendChild(texto);
+      aviso.appendChild(btn);
+      main.prepend(aviso);
+    }
+
+    function removeLocalWarning(){
+      document.querySelector('#firebaseWarning')?.remove();
+    }
+
+    function subscribeToMonth(m){
+      if(!useFirebase || !state.uid) return;
+      unsubscribeMonth?.();
+      unsubscribeMonth = onSnapshot(docMonth(m), (snap) => {
+        if(!snap.exists()){
+          state.contas[m] = state.contas[m] || [];
+          state.receitas[m] = state.receitas[m] || [];
+          state.orcamentos[m] = state.orcamentos[m] || [];
+        } else {
+          const d = snap.data();
+          state.contas[m] = d.contas || [];
+          state.receitas[m] = d.receitas || [];
+          state.orcamentos[m] = d.orcamentos || [];
+          state.recorrentes = d.recorrentes || state.recorrentes || [];
+        }
+        if(state.month === m){
+          renderAll();
+        }
+      }, (err) => {
+        console.warn('Falha ao escutar mês no Firestore.', err);
+      });
+    }
+
+    async function startApp(){
+      const m = yyyymm(new Date());
+      resetStateData();
+
+      if(useFirebase){
+        try {
+          await loadConfig();
+          await loadMonth(m);
+          removeLocalWarning();
+        } catch(err){
+          console.warn('Firebase indisponível, usando armazenamento local.', err);
+          useFirebase = false;
+        }
+      }
+
+      if(!useFirebase){
+        unsubscribeMonth?.();
+        unsubscribeMonth = null;
+        state.uid = 'local';
+        await loadConfig();
+        await loadMonth(m);
+        showLocalWarning();
+      }
+
+      document.querySelector('#relIni').value = m;
+      document.querySelector('#relFim').value = m;
+      setMonth(m);
+      loadCfgUI();
+      activateTab('dashboard');
     }
 
     // ===== Helpers Firestore ===== //
@@ -450,7 +664,15 @@
 
     // ===== Mês atual ===== //
     const monthPicker = document.querySelector('#monthPicker');
-    function setMonth(m){ state.month = m; monthPicker.value = m; document.querySelector('#currentMonthLabel').textContent = new Date(m+'-01').toLocaleDateString(cfg.locale, { month:'long', year:'numeric' }); renderAll(); }
+    function setMonth(m){
+      state.month = m;
+      monthPicker.value = m;
+      document.querySelector('#currentMonthLabel').textContent = new Date(m+'-01').toLocaleDateString(cfg.locale, { month:'long', year:'numeric' });
+      if(useFirebase && state.uid){
+        subscribeToMonth(m);
+      }
+      renderAll();
+    }
     document.querySelector('#btnPrevMonth').onclick = async () => { const [y,m] = state.month.split('-').map(Number); const d = new Date(y, m-2, 1); await loadMonth(yyyymm(d)); setMonth(yyyymm(d)); };
     document.querySelector('#btnNextMonth').onclick = async () => { const [y,m] = state.month.split('-').map(Number); const d = new Date(y, m, 1); await loadMonth(yyyymm(d)); setMonth(yyyymm(d)); };
     document.querySelector('#btnHoje').onclick = async () => { const m = yyyymm(new Date()); await loadMonth(m); setMonth(m); };
@@ -673,29 +895,133 @@
     function gerarRecorrentesDoMes(){ const mm = state.month; const list = monthContas(); const faltantes = []; for(const modelo of state.recorrentes){ const ja = list.some(c => c._modeloId === modelo.id || (c.descricao===modelo.descricao && c.vencimento.slice(0,7)===mm)); if(!ja){ list.push({ id: crypto.randomUUID(), descricao: modelo.descricao, categoria: modelo.categoria, vencimento: `${mm}-${String(modelo.dia).padStart(2,'0')}`, valor: modelo.valor, pago: false, recorrente: true, _modeloId: modelo.id }); faltantes.push(modelo.descricao); } } if(faltantes.length) { scheduleSave(); renderAll(); alert('Recorrentes adicionadas: '+faltantes.join(', ')); } else alert('Nenhuma recorrente pendente para gerar.'); }
     document.querySelector('#btnGerarRecorrentes').onclick = gerarRecorrentesDoMes;
 
-    // ===== Inicialização com Auth Anônima ===== //
-    (async function init(){
-      const m = yyyymm(new Date());
+    btnShowRegister?.addEventListener('click', () => switchAuthMode('register'));
+    btnShowLogin?.addEventListener('click', () => switchAuthMode('login'));
+
+    formLogin?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if(!formLogin) return;
+      setAuthError('');
+      const email = $('#loginEmail', formLogin)?.value.trim();
+      const password = $('#loginPassword', formLogin)?.value;
+      if(!email || !password) return setAuthError('Informe e-mail e senha.');
+      const submitBtn = formLogin.querySelector('[data-submit="login"]');
+      const inputs = formLogin.querySelectorAll('input');
+      const originalText = submitBtn?.textContent;
+      inputs.forEach(inp => inp.disabled = true);
+      if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Entrando...'; }
       try {
-        const cred = await signInAnonymously(auth); state.uid = cred.user.uid;
-        await loadConfig();
-        await loadMonth(m);
-        onSnapshot(docMonth(m), (snap)=>{ if(!snap.exists()) return; const d = snap.data(); state.contas[m] = d.contas||[]; state.receitas[m] = d.receitas||[]; state.orcamentos[m] = d.orcamentos||[]; state.recorrentes = d.recorrentes||state.recorrentes; renderAll(); });
+        await signInWithEmailAndPassword(auth, email, password);
+        manualLocalMode = false;
       } catch(err){
-        console.warn('Firebase indisponível, usando armazenamento local.', err);
-        useFirebase = false;
-        state.uid = 'local';
-        await loadConfig();
-        await loadMonth(m);
+        console.error('Erro no login', err);
+        setAuthError(translateAuthError(err));
+      } finally {
+        inputs.forEach(inp => inp.disabled = false);
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = originalText ?? 'Entrar'; }
       }
-      document.querySelector('#relIni').value = m; document.querySelector('#relFim').value = m; setMonth(m); loadCfgUI(); activateTab('dashboard');
-      if(!useFirebase){
-        const aviso = document.createElement('div');
-        aviso.className = 'mx-auto max-w-3xl mb-4 px-4 py-3 rounded-xl bg-amber-100 border border-amber-300 text-amber-900 text-sm';
-        aviso.innerHTML = 'Não foi possível conectar ao Firebase. Os dados serão mantidos apenas neste navegador.';
-        document.querySelector('main').prepend(aviso);
+    });
+
+    formRegister?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if(!formRegister) return;
+      setAuthError('');
+      const email = $('#registerEmail', formRegister)?.value.trim();
+      const password = $('#registerPassword', formRegister)?.value;
+      if(!email || !password) return setAuthError('Informe e-mail e senha.');
+      const submitBtn = formRegister.querySelector('[data-submit="register"]');
+      const inputs = formRegister.querySelectorAll('input');
+      const originalText = submitBtn?.textContent;
+      inputs.forEach(inp => inp.disabled = true);
+      if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Criando...'; }
+      try {
+        await createUserWithEmailAndPassword(auth, email, password);
+        manualLocalMode = false;
+      } catch(err){
+        console.error('Erro ao registrar', err);
+        setAuthError(translateAuthError(err));
+      } finally {
+        inputs.forEach(inp => inp.disabled = false);
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = originalText ?? 'Criar conta'; }
       }
-    })();
+    });
+
+    btnModoLocal?.addEventListener('click', async () => {
+      manualLocalMode = true;
+      useFirebase = false;
+      state.uid = 'local';
+      toggleAuthOverlay(false);
+      updateUserBadge(null);
+      currentAuthUid = null;
+      try {
+        await startApp();
+      } catch(err){
+        console.error('Erro ao iniciar modo local.', err);
+        alert('Não foi possível iniciar o modo local. Atualize a página e tente novamente.');
+        manualLocalMode = false;
+        useFirebase = true;
+        toggleAuthOverlay(true);
+      }
+    });
+
+    btnLogout?.addEventListener('click', async () => {
+      if(btnLogout.disabled) return;
+      const originalText = btnLogout.textContent;
+      btnLogout.disabled = true;
+      btnLogout.textContent = 'Saindo...';
+      try {
+        await signOut(auth);
+      } catch(err){
+        console.error('Erro ao sair', err);
+        alert('Não foi possível sair. Tente novamente.');
+      } finally {
+        btnLogout.disabled = false;
+        btnLogout.textContent = originalText || 'Sair';
+      }
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+      if(user){
+        if(currentAuthUid === user.uid && useFirebase && Object.keys(state.contas).length){
+          updateUserBadge(user);
+          toggleAuthOverlay(false);
+          return;
+        }
+        currentAuthUid = user.uid;
+        manualLocalMode = false;
+        useFirebase = true;
+        state.uid = user.uid;
+        updateUserBadge(user);
+        toggleAuthOverlay(false);
+        formLogin?.reset();
+        formRegister?.reset();
+        setAuthError('');
+        try {
+          await startApp();
+        } catch(err){
+          console.error('Erro ao carregar dados do Firebase.', err);
+          alert('Não foi possível carregar os dados do Firebase. Os dados locais serão utilizados.');
+          useFirebase = false;
+          await startApp();
+        }
+      } else {
+        currentAuthUid = null;
+        updateUserBadge(null);
+        state.uid = null;
+        unsubscribeMonth?.();
+        unsubscribeMonth = null;
+        if(manualLocalMode){
+          toggleAuthOverlay(false);
+          return;
+        }
+        useFirebase = true;
+        switchAuthMode('login');
+        setAuthError('');
+        toggleAuthOverlay(true);
+      }
+    });
+
+    switchAuthMode('login');
   </script>
 </body>
 </html>
