@@ -16,6 +16,32 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
+  <div id="authOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4">
+    <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+      <div class="space-y-1 text-center">
+        <h2 id="authTitle" class="text-xl font-semibold">Entrar</h2>
+        <p class="text-sm text-slate-500">Use seu e-mail e senha para acessar seus dados ou crie uma conta gratuita.</p>
+      </div>
+      <form id="authForm" class="space-y-3">
+        <div class="text-left space-y-1">
+          <label for="authEmail" class="text-sm text-slate-600">E-mail</label>
+          <input id="authEmail" name="email" type="email" autocomplete="email" required class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+        <div class="text-left space-y-1">
+          <label for="authPassword" class="text-sm text-slate-600">Senha</label>
+          <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="6" required class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+        <p id="authMessage" class="min-h-[1.5rem] text-sm text-rose-600"></p>
+        <button id="authSubmit" type="submit" class="w-full rounded-xl bg-primary-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-primary-700">Entrar</button>
+      </form>
+      <div class="flex items-center justify-center gap-1 text-sm text-slate-600">
+        <span id="authToggleHint">Ainda não tem conta?</span>
+        <button id="authToggle" type="button" class="font-semibold text-primary-600 hover:text-primary-700">Criar conta</button>
+      </div>
+      <button id="btnOffline" type="button" class="w-full text-sm text-slate-500 underline underline-offset-2">Continuar no modo offline</button>
+    </div>
+  </div>
+
   <!-- App Wrapper -->
   <div id="app" class="min-h-screen grid grid-cols-1 lg:grid-cols-[260px_1fr]">
     <!-- Sidebar -->
@@ -35,6 +61,11 @@
         <button data-tab="relatorios" class="tab-btn w-full text-left px-3 py-2 rounded-xl hover:bg-primary-50 hover:text-primary-700 font-medium flex items-center gap-2">📈 <span>Relatórios</span></button>
         <button data-tab="config" class="tab-btn w-full text-left px-3 py-2 rounded-xl hover:bg-primary-50 hover:text-primary-700 font-medium flex items-center gap-2">⚙️ <span>Configurações</span></button>
       </nav>
+      <div id="userBox" class="mt-6 hidden rounded-xl border border-slate-200 p-3 text-xs text-slate-600 bg-slate-50">
+        <p>Conectado como <span id="userEmail" class="font-semibold text-slate-800"></span></p>
+        <button id="btnSignOut" class="mt-2 inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100">Sair</button>
+      </div>
+
       <div class="mt-8 p-3 rounded-xl bg-slate-100 text-xs text-slate-600">
         <p class="font-semibold mb-1">Dica</p>
         <p>Os dados ficam salvos no seu navegador (localStorage). Use Exportar para backup.</p>
@@ -304,7 +335,7 @@
   <script type="module">
     // ===== Firebase (modular v10 CDN) ===== //
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
-    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, setPersistence, browserLocalPersistence, signOut } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, onSnapshot, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -319,12 +350,146 @@
     const appFB = initializeApp(firebaseConfig);
     const auth = getAuth(appFB);
     const db = getFirestore(appFB);
+    try { await setPersistence(auth, browserLocalPersistence); } catch (err) { console.warn('Não foi possível manter sessão persistente.', err); }
     // Offline (opcional)
     try { await enableIndexedDbPersistence(db); } catch(e) { /* já habilitado ou sem suporte */ }
 
     // ===== Utilidades ===== //
     const $ = (sel, el = document) => el.querySelector(sel);
     const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+
+    const authOverlay = $('#authOverlay');
+    const authForm = $('#authForm');
+    const authTitle = $('#authTitle');
+    const authSubmit = $('#authSubmit');
+    const authToggle = $('#authToggle');
+    const authToggleHint = $('#authToggleHint');
+    const authMessage = $('#authMessage');
+    const authEmail = $('#authEmail');
+    const authPassword = $('#authPassword');
+    const btnOffline = $('#btnOffline');
+    const userBox = $('#userBox');
+    const userEmailEl = $('#userEmail');
+    const btnSignOut = $('#btnSignOut');
+
+    let authMode = 'login';
+
+    function updateAuthMode(){
+      if(authTitle) authTitle.textContent = authMode === 'login' ? 'Entrar' : 'Criar conta';
+      if(authSubmit && !authSubmit.disabled) authSubmit.textContent = authMode === 'login' ? 'Entrar' : 'Criar conta';
+      if(authToggle) authToggle.textContent = authMode === 'login' ? 'Criar conta' : 'Já tenho conta';
+      if(authToggleHint) authToggleHint.textContent = authMode === 'login' ? 'Ainda não tem conta?' : 'Já possui uma conta?';
+      if(authPassword) authPassword.autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
+    }
+    updateAuthMode();
+
+    function setAuthLoading(isLoading){
+      authForm?.querySelectorAll('input').forEach(inp => inp.disabled = isLoading);
+      if(authSubmit){
+        authSubmit.disabled = isLoading;
+        authSubmit.textContent = isLoading
+          ? (authMode === 'login' ? 'Entrando...' : 'Criando conta...')
+          : (authMode === 'login' ? 'Entrar' : 'Criar conta');
+      }
+      if(btnOffline) btnOffline.disabled = isLoading;
+      if(authToggle) authToggle.disabled = isLoading;
+    }
+
+    function authErrorMessage(error){
+      const code = error?.code || '';
+      const map = {
+        'auth/invalid-email': 'Digite um e-mail válido.',
+        'auth/user-not-found': 'Usuário não encontrado. Verifique o e-mail ou crie uma conta.',
+        'auth/wrong-password': 'Senha incorreta. Tente novamente.',
+        'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
+        'auth/weak-password': 'A senha deve ter pelo menos 6 caracteres.',
+        'auth/network-request-failed': 'Falha de rede. Verifique sua conexão e tente novamente.',
+        'auth/configuration-not-found': 'O login por e-mail/senha não está habilitado no projeto do Firebase.'
+      };
+      return map[code] || (error?.message || 'Não foi possível concluir a operação. Tente novamente.');
+    }
+
+    function showAuthOverlay(){ authOverlay?.classList.remove('hidden'); }
+    function hideAuthOverlay(){ authOverlay?.classList.add('hidden'); }
+
+    function updateUserBox(user){
+      if(user){
+        userBox?.classList.remove('hidden');
+        if(userEmailEl) userEmailEl.textContent = user.email || 'Usuário';
+      } else {
+        userBox?.classList.add('hidden');
+        if(userEmailEl) userEmailEl.textContent = '';
+      }
+    }
+
+    function showOfflineBanner(){
+      const main = document.querySelector('main');
+      if(!main) return;
+      let aviso = document.querySelector('#offlineBanner');
+      if(!aviso){
+        aviso = document.createElement('div');
+        aviso.id = 'offlineBanner';
+        aviso.className = 'mx-auto max-w-3xl mb-4 rounded-xl border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900';
+        aviso.innerHTML = `<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><span>Não foi possível conectar ao Firebase. Os dados serão mantidos apenas neste navegador.</span><button data-retry-auth class="inline-flex items-center justify-center rounded-lg border border-amber-400 bg-white/70 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-white">Tentar conectar novamente</button></div>`;
+        main.prepend(aviso);
+      } else {
+        aviso.classList.remove('hidden');
+      }
+      if(!aviso.dataset.bound){
+        const retry = aviso.querySelector('[data-retry-auth]');
+        retry?.addEventListener('click', () => {
+          useFirebase = true;
+          if(authMessage) authMessage.textContent = '';
+          showAuthOverlay();
+          authEmail?.focus();
+        });
+        aviso.dataset.bound = 'true';
+      }
+    }
+
+    function hideOfflineBanner(){
+      const aviso = document.querySelector('#offlineBanner');
+      if(aviso) aviso.remove();
+    }
+
+    authToggle?.addEventListener('click', () => {
+      authMode = authMode === 'login' ? 'signup' : 'login';
+      if(authMessage) authMessage.textContent = '';
+      updateAuthMode();
+    });
+
+    authForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if(!authEmail || !authPassword) return;
+      const email = authEmail.value.trim();
+      const password = authPassword.value.trim();
+      if(!email || !password) return;
+      if(authMessage) authMessage.textContent = '';
+      setAuthLoading(true);
+      try {
+        if(authMode === 'login'){
+          await signInWithEmailAndPassword(auth, email, password);
+        } else {
+          await createUserWithEmailAndPassword(auth, email, password);
+          if(authMessage) authMessage.textContent = 'Conta criada com sucesso! Você já está conectado.';
+        }
+      } catch (err) {
+        console.error('Erro de autenticação', err);
+        if(authMessage) authMessage.textContent = authErrorMessage(err);
+      } finally {
+        setAuthLoading(false);
+        updateAuthMode();
+      }
+    });
+
+    btnSignOut?.addEventListener('click', async () => {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.error('Erro ao sair', err);
+        if(authMessage) authMessage.textContent = authErrorMessage(err);
+      }
+    });
 
     const cfgLocal = {
       read(key, def){ try { return JSON.parse(localStorage.getItem(key) ?? JSON.stringify(def)); } catch { return def } },
@@ -673,29 +838,122 @@
     function gerarRecorrentesDoMes(){ const mm = state.month; const list = monthContas(); const faltantes = []; for(const modelo of state.recorrentes){ const ja = list.some(c => c._modeloId === modelo.id || (c.descricao===modelo.descricao && c.vencimento.slice(0,7)===mm)); if(!ja){ list.push({ id: crypto.randomUUID(), descricao: modelo.descricao, categoria: modelo.categoria, vencimento: `${mm}-${String(modelo.dia).padStart(2,'0')}`, valor: modelo.valor, pago: false, recorrente: true, _modeloId: modelo.id }); faltantes.push(modelo.descricao); } } if(faltantes.length) { scheduleSave(); renderAll(); alert('Recorrentes adicionadas: '+faltantes.join(', ')); } else alert('Nenhuma recorrente pendente para gerar.'); }
     document.querySelector('#btnGerarRecorrentes').onclick = gerarRecorrentesDoMes;
 
-    // ===== Inicialização com Auth Anônima ===== //
-    (async function init(){
-      const m = yyyymm(new Date());
+    // ===== Inicialização e Auth ===== //
+    let unsubscribeMonth = null;
+    let startAppPromise = null;
+
+    function resetData(){
+      state.contas = {};
+      state.receitas = {};
+      state.orcamentos = {};
+      state.recorrentes = [];
+    }
+
+    async function startApp(user){
+      if(startAppPromise) return startAppPromise;
+      startAppPromise = (async () => {
+        resetData();
+        const initialMonth = yyyymm(new Date());
+        state.month = initialMonth;
+        let firebaseOk = useFirebase && !!user;
+        if(firebaseOk){
+          state.uid = user.uid;
+          try {
+            await loadConfig();
+            await loadMonth(initialMonth);
+            unsubscribeMonth?.();
+            unsubscribeMonth = onSnapshot(
+              docMonth(initialMonth),
+              (snap) => {
+                if(!snap.exists()) return;
+                const d = snap.data();
+                state.contas[initialMonth] = d.contas || [];
+                state.receitas[initialMonth] = d.receitas || [];
+                state.orcamentos[initialMonth] = d.orcamentos || [];
+                state.recorrentes = d.recorrentes || state.recorrentes;
+                renderAll();
+              },
+              (error) => console.error('Erro ao sincronizar mês no Firestore.', error)
+            );
+          } catch (err) {
+            console.warn('Firebase indisponível, usando armazenamento local.', err);
+            firebaseOk = false;
+            useFirebase = false;
+            state.uid = 'local';
+            unsubscribeMonth?.();
+            unsubscribeMonth = null;
+            await loadConfig();
+            await loadMonth(initialMonth);
+          }
+        } else {
+          useFirebase = false;
+          state.uid = 'local';
+          unsubscribeMonth?.();
+          unsubscribeMonth = null;
+          await loadConfig();
+          await loadMonth(initialMonth);
+        }
+
+        document.querySelector('#relIni').value = initialMonth;
+        document.querySelector('#relFim').value = initialMonth;
+        setMonth(initialMonth);
+        loadCfgUI();
+        activateTab('dashboard');
+
+        if(firebaseOk){
+          hideOfflineBanner();
+        } else {
+          showOfflineBanner();
+        }
+        updateUserBox(firebaseOk ? user : null);
+        hideAuthOverlay();
+      })();
+
       try {
-        const cred = await signInAnonymously(auth); state.uid = cred.user.uid;
-        await loadConfig();
-        await loadMonth(m);
-        onSnapshot(docMonth(m), (snap)=>{ if(!snap.exists()) return; const d = snap.data(); state.contas[m] = d.contas||[]; state.receitas[m] = d.receitas||[]; state.orcamentos[m] = d.orcamentos||[]; state.recorrentes = d.recorrentes||state.recorrentes; renderAll(); });
-      } catch(err){
-        console.warn('Firebase indisponível, usando armazenamento local.', err);
-        useFirebase = false;
-        state.uid = 'local';
-        await loadConfig();
-        await loadMonth(m);
+        await startAppPromise;
+      } finally {
+        startAppPromise = null;
       }
-      document.querySelector('#relIni').value = m; document.querySelector('#relFim').value = m; setMonth(m); loadCfgUI(); activateTab('dashboard');
-      if(!useFirebase){
-        const aviso = document.createElement('div');
-        aviso.className = 'mx-auto max-w-3xl mb-4 px-4 py-3 rounded-xl bg-amber-100 border border-amber-300 text-amber-900 text-sm';
-        aviso.innerHTML = 'Não foi possível conectar ao Firebase. Os dados serão mantidos apenas neste navegador.';
-        document.querySelector('main').prepend(aviso);
+    }
+
+    btnOffline?.addEventListener('click', async () => {
+      if(authMessage) authMessage.textContent = '';
+      useFirebase = false;
+      setAuthLoading(true);
+      try {
+        await startApp(null);
+      } catch (err) {
+        console.error('Erro ao iniciar modo offline', err);
+        if(authMessage) authMessage.textContent = 'Não foi possível iniciar no modo offline.';
+      } finally {
+        setAuthLoading(false);
+        updateAuthMode();
       }
-    })();
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+      if(user){
+        useFirebase = true;
+        if(authMessage) authMessage.textContent = '';
+        await startApp(user);
+      } else {
+        unsubscribeMonth?.();
+        unsubscribeMonth = null;
+        showAuthOverlay();
+        state.uid = null;
+        resetData();
+        state.month = yyyymm(new Date());
+        document.querySelector('#relIni').value = state.month;
+        document.querySelector('#relFim').value = state.month;
+        setMonth(state.month);
+        updateUserBox(null);
+        if(useFirebase){
+          hideOfflineBanner();
+        } else {
+          showOfflineBanner();
+        }
+      }
+    });
   </script>
 </body>
 </html>
