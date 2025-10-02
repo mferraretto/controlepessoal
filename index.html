@@ -4,26 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Financeiro Pessoal — Controle Mensal</title>
-  <!-- Tailwind CSS via CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            primary: {
-              50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc',
-              400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca',
-              800: '#3730a3', 900: '#312e81'
-            }
-          },
-          boxShadow: {
-            soft: '0 10px 25px -10px rgba(0,0,0,0.2)'
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Tailwind CSS (compilado) -->
+  <link rel="stylesheet" href="./styles/styles.css" />
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
@@ -585,16 +567,16 @@
     document.querySelector('#btnNovoOrcamento').onclick = ()=>{ const categoria = prompt('Categoria do orçamento (ex.: Mercado)'); if(!categoria) return; const limite = Number(prompt('Limite mensal (R$)')||'0'); const list = monthOrcamentos(); list.push({ id: crypto.randomUUID(), categoria, limite }); scheduleSave(); renderOrcamentos(); renderDashboard(); }
 
     // ===== Import/Export CSV (mantidos) ===== //
-    function exportCSVContas(){ const cols = ['descricao','categoria','vencimento','valor','pago','recorrente']; const rows = [cols.join(',')].concat(monthContas().map(c=> cols.map(k=>`"${String(c[k]??'').replaceAll('"','""')}"`).join(','))); const blob = new Blob([rows.join('
 ')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `contas_${state.month}.csv`; a.click(); }
-    function exportCSVReceitas(){ const cols = ['fonte','categoria','data','valor']; const rows = [cols.join(',')].concat(monthReceitas().map(r=> cols.map(k=>`"${String(r[k]??'').replaceAll('"','""')}"`).join(','))); const blob = new Blob([rows.join('
 ')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `receitas_${state.month}.csv`; a.click(); }
+    function exportCSVContas(){ const cols = ['descricao','categoria','vencimento','valor','pago','recorrente']; const rows = [cols.join(',')].concat(monthContas().map(c=> cols.map(k=>`"${String(c[k]??'').replaceAll('"','""')}"`).join(','))); const blob = new Blob([rows.join('\n')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `contas_${state.month}.csv`; a.click(); }
+    function exportCSVReceitas(){ const cols = ['fonte','categoria','data','valor']; const rows = [cols.join(',')].concat(monthReceitas().map(r=> cols.map(k=>`"${String(r[k]??'').replaceAll('"','""')}"`).join(','))); const blob = new Blob([rows.join('\n')], {type:'text/csv;charset=utf-8;'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `receitas_${state.month}.csv`; a.click(); }
     document.querySelector('#btnExportarContas').onclick = exportCSVContas;
     document.querySelector('#btnExportarReceitas').onclick = exportCSVReceitas;
 
-    function importCSV(file, tipo){ const reader = new FileReader(); reader.onload = ()=>{ const text = reader.result; const [header,...lines] = text.split(/
 ?
 /).filter(Boolean); const cols = header.split(',').map(s=> s.replaceAll('"','').trim()); for(const line of lines){ const values = line.match(/("[^"]*"|[^,]+)/g)?.map(s=> s.replace(/^"|"$/g,'').replaceAll('""','"')) || []; if(tipo==='contas'){ const obj = { id: crypto.randomUUID(), descricao:'', categoria:'', vencimento: state.month+'-15', valor:0, pago:false, recorrente:false }; cols.forEach((k,i)=> obj[k] = values[i]); obj.valor = Number(obj.valor)||0; obj.pago = String(obj.pago).toLowerCase()==='true'; obj.recorrente = String(obj.recorrente).toLowerCase()==='true'; monthContas().push(obj); } else { const obj = { id: crypto.randomUUID(), fonte:'', categoria:'', data: state.month+'-15', valor:0 }; cols.forEach((k,i)=> obj[k] = values[i]); obj.valor = Number(obj.valor)||0; monthReceitas().push(obj); } } scheduleSave(); renderAll(); }; reader.readAsText(file, 'utf-8'); }
+    function importCSV(file, tipo){ const reader = new FileReader(); reader.onload = ()=>{ const text = reader.result; const [header,...lines] = text.split(/\r?\n/).filter(Boolean); const cols = header.split(',').map(s=> s.replaceAll('"','').trim()); for(const line of lines){ const values = line.match(/("[^"]*"|[^,]+)/g)?.map(s=> s.replace(/^"|"$/g,'').replaceAll('""','"')) || []; if(tipo==='contas'){ const obj = { id: crypto.randomUUID(), descricao:'', categoria:'', vencimento: state.month+'-15', valor:0, pago:false, recorrente:false }; cols.forEach((k,i)=> obj[k] = values[i]); obj.valor = Number(obj.valor)||0; obj.pago = String(obj.pago).toLowerCase()==='true'; obj.recorrente = String(obj.recorrente).toLowerCase()==='true'; monthContas().push(obj); } else { const obj = { id: crypto.randomUUID(), fonte:'', categoria:'', data: state.month+'-15', valor:0 }; cols.forEach((k,i)=> obj[k] = values[i]); obj.valor = Number(obj.valor)||0; monthReceitas().push(obj); } } scheduleSave(); renderAll(); }; reader.readAsText(file, 'utf-8'); }
     document.querySelector('#importContas').onchange = (e)=>{ const f=e.target.files[0]; if(f) importCSV(f,'contas'); e.target.value=''; }
     document.querySelector('#importReceitas').onchange = (e)=>{ const f=e.target.files[0]; if(f) importCSV(f,'receitas'); e.target.value=''; }
 

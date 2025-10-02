@@ -1,0 +1,9 @@
+{
+  "name": "controlepessoal",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./styles/tailwind.css -o ./styles/styles.css --minify",
+    "dev:css": "tailwindcss -i ./styles/tailwind.css -o ./styles/styles.css --watch"
+  }
+}
