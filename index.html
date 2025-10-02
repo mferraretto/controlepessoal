@@ -592,7 +592,8 @@
     document.querySelector('#btnExportarContas').onclick = exportCSVContas;
     document.querySelector('#btnExportarReceitas').onclick = exportCSVReceitas;
 
-    function importCSV(file, tipo){ const reader = new FileReader(); reader.onload = ()=>{ const text = reader.result; const [header,...lines] = text.split(/?
+    function importCSV(file, tipo){ const reader = new FileReader(); reader.onload = ()=>{ const text = reader.result; const [header,...lines] = text.split(/
+?
 /).filter(Boolean); const cols = header.split(',').map(s=> s.replaceAll('"','').trim()); for(const line of lines){ const values = line.match(/("[^"]*"|[^,]+)/g)?.map(s=> s.replace(/^"|"$/g,'').replaceAll('""','"')) || []; if(tipo==='contas'){ const obj = { id: crypto.randomUUID(), descricao:'', categoria:'', vencimento: state.month+'-15', valor:0, pago:false, recorrente:false }; cols.forEach((k,i)=> obj[k] = values[i]); obj.valor = Number(obj.valor)||0; obj.pago = String(obj.pago).toLowerCase()==='true'; obj.recorrente = String(obj.recorrente).toLowerCase()==='true'; monthContas().push(obj); } else { const obj = { id: crypto.randomUUID(), fonte:'', categoria:'', data: state.month+'-15', valor:0 }; cols.forEach((k,i)=> obj[k] = values[i]); obj.valor = Number(obj.valor)||0; monthReceitas().push(obj); } } scheduleSave(); renderAll(); }; reader.readAsText(file, 'utf-8'); }
     document.querySelector('#importContas').onchange = (e)=>{ const f=e.target.files[0]; if(f) importCSV(f,'contas'); e.target.value=''; }
     document.querySelector('#importReceitas').onchange = (e)=>{ const f=e.target.files[0]; if(f) importCSV(f,'receitas'); e.target.value=''; }
