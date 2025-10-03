@@ -348,7 +348,7 @@
 
     const appFB = initializeApp(firebaseConfig);
     const auth = getAuth(appFB);
-    const db = getFirestore(appFB);
+    const db = getFirestore(appFB, 'pesoal');
     try { await setPersistence(auth, browserLocalPersistence); } catch (err) { console.warn('Não foi possível manter sessão persistente.', err); }
     // Offline (opcional)
     try { await enableIndexedDbPersistence(db); } catch(e) { /* já habilitado ou sem suporte */ }
