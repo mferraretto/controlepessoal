@@ -38,7 +38,6 @@
         <span id="authToggleHint">Ainda não tem conta?</span>
         <button id="authToggle" type="button" class="font-semibold text-primary-600 hover:text-primary-700">Criar conta</button>
       </div>
-      <button id="btnOffline" type="button" class="w-full text-sm text-slate-500 underline underline-offset-2">Continuar no modo offline</button>
     </div>
   </div>
 
@@ -68,7 +67,7 @@
 
       <div class="mt-8 p-3 rounded-xl bg-slate-100 text-xs text-slate-600">
         <p class="font-semibold mb-1">Dica</p>
-        <p>Os dados ficam salvos no seu navegador (localStorage). Use Exportar para backup.</p>
+        <p>Os dados ficam seguros na nuvem (Firestore). Use Exportar para manter um backup local.</p>
       </div>
     </aside>
 
@@ -336,7 +335,7 @@
     // ===== Firebase (modular v10 CDN) ===== //
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, setPersistence, browserLocalPersistence, signOut } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js";
-    import { getFirestore, doc, getDoc, setDoc, onSnapshot, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+    import { getFirestore, doc, getDoc, setDoc, onSnapshot, enableIndexedDbPersistence, collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyB1LL8fjHHTorK6-K_10xfjTePdEwmDhG0",
@@ -367,7 +366,6 @@
     const authMessage = $('#authMessage');
     const authEmail = $('#authEmail');
     const authPassword = $('#authPassword');
-    const btnOffline = $('#btnOffline');
     const userBox = $('#userBox');
     const userEmailEl = $('#userEmail');
     const btnSignOut = $('#btnSignOut');
@@ -391,7 +389,6 @@
           ? (authMode === 'login' ? 'Entrando...' : 'Criando conta...')
           : (authMode === 'login' ? 'Entrar' : 'Criar conta');
       }
-      if(btnOffline) btnOffline.disabled = isLoading;
       if(authToggle) authToggle.disabled = isLoading;
     }
 
@@ -420,36 +417,6 @@
         userBox?.classList.add('hidden');
         if(userEmailEl) userEmailEl.textContent = '';
       }
-    }
-
-    function showOfflineBanner(){
-      const main = document.querySelector('main');
-      if(!main) return;
-      let aviso = document.querySelector('#offlineBanner');
-      if(!aviso){
-        aviso = document.createElement('div');
-        aviso.id = 'offlineBanner';
-        aviso.className = 'mx-auto max-w-3xl mb-4 rounded-xl border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900';
-        aviso.innerHTML = `<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><span>Não foi possível conectar ao Firebase. Os dados serão mantidos apenas neste navegador.</span><button data-retry-auth class="inline-flex items-center justify-center rounded-lg border border-amber-400 bg-white/70 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-white">Tentar conectar novamente</button></div>`;
-        main.prepend(aviso);
-      } else {
-        aviso.classList.remove('hidden');
-      }
-      if(!aviso.dataset.bound){
-        const retry = aviso.querySelector('[data-retry-auth]');
-        retry?.addEventListener('click', () => {
-          useFirebase = true;
-          if(authMessage) authMessage.textContent = '';
-          showAuthOverlay();
-          authEmail?.focus();
-        });
-        aviso.dataset.bound = 'true';
-      }
-    }
-
-    function hideOfflineBanner(){
-      const aviso = document.querySelector('#offlineBanner');
-      if(aviso) aviso.remove();
     }
 
     authToggle?.addEventListener('click', () => {
@@ -491,30 +458,19 @@
       }
     });
 
-    const cfgLocal = {
-      read(key, def){ try { return JSON.parse(localStorage.getItem(key) ?? JSON.stringify(def)); } catch { return def } },
-      write(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
-    }
+    const cfgDefaults = {
+      locale: 'pt-BR',
+      currency: 'BRL',
+      categorias: 'Aluguel, Água, Luz, Internet, Mercado, Transporte, Lazer'
+    };
 
-    const LOCAL_MONTHS_KEY = 'financeiro_meses_v1';
-    const LOCAL_RECORRENTES_KEY = 'financeiro_recorrentes_v1';
-
-    const cfg = {
-      get locale(){ return cfgLocal.read('cfg_locale', 'pt-BR') },
-      set locale(v){ cfgLocal.write('cfg_locale', v) },
-      get currency(){ return cfgLocal.read('cfg_currency', 'BRL') },
-      set currency(v){ cfgLocal.write('cfg_currency', v) },
-      get categorias(){ return cfgLocal.read('cfg_categorias', 'Aluguel, Água, Luz, Internet, Mercado, Transporte, Lazer') },
-      set categorias(v){ cfgLocal.write('cfg_categorias', v) }
-    }
+    const cfg = { ...cfgDefaults };
 
     const fmtMoeda = (v) => new Intl.NumberFormat(cfg.locale, { style: 'currency', currency: cfg.currency }).format(v || 0);
     const yyyymm = (d) => typeof d === 'string' && d.includes('-') ? d.slice(0,7) : new Date(d).toISOString().slice(0,7);
     const todayISO = () => new Date().toISOString().slice(0,10);
 
     // ===== Estado principal ===== //
-    let useFirebase = true;
-
     const state = {
       uid: null,
       month: yyyymm(new Date()),
@@ -524,8 +480,11 @@
       recorrentes: []
     }
 
+    let unsubscribeMonth = null;
+    let subscribedMonth = null;
+
     // ===== Helpers Firestore ===== //
-    const FIRESTORE_ROOT = 'pessoal';
+    const FIRESTORE_ROOT = 'contas';
     const docMonth = (m) => doc(db, FIRESTORE_ROOT, state.uid, 'meses', m);
     const docCfg = () => doc(db, FIRESTORE_ROOT, state.uid, 'config', 'main');
 
@@ -534,63 +493,50 @@
     function monthOrcamentos(){ return state.orcamentos[state.month] ?? (state.orcamentos[state.month] = []); }
 
     async function loadConfig(){
-      if(!useFirebase){
-        state.recorrentes = cfgLocal.read(LOCAL_RECORRENTES_KEY, state.recorrentes || []);
-        return;
-      }
-      const snap = await getDoc(docCfg());
-      if(snap.exists()){
-        const c = snap.data();
-        if(c.locale) cfg.locale = c.locale;
-        if(c.currency) cfg.currency = c.currency;
-        if(c.categorias) cfg.categorias = c.categorias;
-        if(Array.isArray(c.recorrentes)) state.recorrentes = c.recorrentes;
+      if(!state.uid) return;
+      Object.assign(cfg, cfgDefaults);
+      try {
+        const snap = await getDoc(docCfg());
+        if(snap.exists()){
+          const c = snap.data() || {};
+          if(c.locale) cfg.locale = c.locale;
+          if(c.currency) cfg.currency = c.currency;
+          if(typeof c.categorias === 'string') cfg.categorias = c.categorias;
+          if(Array.isArray(c.recorrentes)) state.recorrentes = c.recorrentes;
+        }
+      } catch (err) {
+        console.error('Erro ao carregar configurações', err);
+        throw err;
       }
     }
     async function saveConfig(){
-      if(!useFirebase){
-        cfgLocal.write(LOCAL_RECORRENTES_KEY, state.recorrentes);
-        return;
-      }
+      if(!state.uid) return;
       await setDoc(docCfg(), { locale: cfg.locale, currency: cfg.currency, categorias: cfg.categorias, recorrentes: state.recorrentes }, { merge: true });
     }
 
     async function loadMonth(m){
-      if(!useFirebase){
-        const todos = cfgLocal.read(LOCAL_MONTHS_KEY, {});
-        const d = todos[m] || {};
-        state.contas[m] = d.contas || state.contas[m] || [];
-        state.receitas[m] = d.receitas || state.receitas[m] || [];
-        state.orcamentos[m] = d.orcamentos || state.orcamentos[m] || [];
-        state.recorrentes = cfgLocal.read(LOCAL_RECORRENTES_KEY, state.recorrentes || []);
-        return;
-      }
-      const snap = await getDoc(docMonth(m));
-      if(snap.exists()){
-        const d = snap.data();
-        state.contas[m] = d.contas || [];
-        state.receitas[m] = d.receitas || [];
-        state.orcamentos[m] = d.orcamentos || [];
-        state.recorrentes = d.recorrentes || state.recorrentes || [];
-      } else {
-        state.contas[m] = state.contas[m] || [];
-        state.receitas[m] = state.receitas[m] || [];
-        state.orcamentos[m] = state.orcamentos[m] || [];
+      if(!state.uid) return;
+      try {
+        const snap = await getDoc(docMonth(m));
+        if(snap.exists()){
+          const d = snap.data() || {};
+          state.contas[m] = Array.isArray(d.contas) ? d.contas : [];
+          state.receitas[m] = Array.isArray(d.receitas) ? d.receitas : [];
+          state.orcamentos[m] = Array.isArray(d.orcamentos) ? d.orcamentos : [];
+          if(Array.isArray(d.recorrentes)) state.recorrentes = d.recorrentes;
+        } else {
+          state.contas[m] = state.contas[m] || [];
+          state.receitas[m] = state.receitas[m] || [];
+          state.orcamentos[m] = state.orcamentos[m] || [];
+        }
+      } catch (err) {
+        console.error('Erro ao carregar dados do mês', err);
+        throw err;
       }
     }
     async function saveMonth(){
+      if(!state.uid) return;
       const m = state.month;
-      if(!useFirebase){
-        const todos = cfgLocal.read(LOCAL_MONTHS_KEY, {});
-        todos[m] = {
-          contas: monthContas(),
-          receitas: monthReceitas(),
-          orcamentos: monthOrcamentos()
-        };
-        cfgLocal.write(LOCAL_MONTHS_KEY, todos);
-        cfgLocal.write(LOCAL_RECORRENTES_KEY, state.recorrentes);
-        return;
-      }
       await setDoc(docMonth(m), {
         contas: monthContas(),
         receitas: monthReceitas(),
@@ -600,7 +546,44 @@
     }
 
     // Debounce salva em 300ms
-    let tSave; const scheduleSave = ()=>{ clearTimeout(tSave); tSave = setTimeout(()=>{ saveMonth().catch(()=>{}); saveConfig().catch(()=>{}); }, 300) };
+    let tSave;
+    const scheduleSave = () => {
+      if(!state.uid) return;
+      clearTimeout(tSave);
+      tSave = setTimeout(() => {
+        Promise.all([saveMonth(), saveConfig()]).catch(err => console.error('Erro ao salvar automaticamente', err));
+      }, 300);
+    };
+
+    function subscribeToMonth(m){
+      if(!state.uid){
+        unsubscribeMonth?.();
+        unsubscribeMonth = null;
+        subscribedMonth = null;
+        return;
+      }
+      if(subscribedMonth === m) return;
+      unsubscribeMonth?.();
+      subscribedMonth = m;
+      unsubscribeMonth = onSnapshot(
+        docMonth(m),
+        (snap) => {
+          if(snap.exists()){
+            const d = snap.data() || {};
+            state.contas[m] = Array.isArray(d.contas) ? d.contas : [];
+            state.receitas[m] = Array.isArray(d.receitas) ? d.receitas : [];
+            state.orcamentos[m] = Array.isArray(d.orcamentos) ? d.orcamentos : [];
+            if(Array.isArray(d.recorrentes)) state.recorrentes = d.recorrentes;
+          } else {
+            state.contas[m] = [];
+            state.receitas[m] = [];
+            state.orcamentos[m] = [];
+          }
+          if(state.month === m) renderAll();
+        },
+        (error) => console.error('Erro ao sincronizar mês no Firestore.', error)
+      );
+    }
 
     // ===== Tabs ===== //
     function activateTab(id){
@@ -616,7 +599,13 @@
 
     // ===== Mês atual ===== //
     const monthPicker = document.querySelector('#monthPicker');
-    function setMonth(m){ state.month = m; monthPicker.value = m; document.querySelector('#currentMonthLabel').textContent = new Date(m+'-01').toLocaleDateString(cfg.locale, { month:'long', year:'numeric' }); renderAll(); }
+    function setMonth(m){
+      state.month = m;
+      if(monthPicker) monthPicker.value = m;
+      document.querySelector('#currentMonthLabel').textContent = new Date(m+'-01').toLocaleDateString(cfg.locale, { month:'long', year:'numeric' });
+      if(state.uid) subscribeToMonth(m);
+      renderAll();
+    }
     document.querySelector('#btnPrevMonth').onclick = async () => { const [y,m] = state.month.split('-').map(Number); const d = new Date(y, m-2, 1); await loadMonth(yyyymm(d)); setMonth(yyyymm(d)); };
     document.querySelector('#btnNextMonth').onclick = async () => { const [y,m] = state.month.split('-').map(Number); const d = new Date(y, m, 1); await loadMonth(yyyymm(d)); setMonth(yyyymm(d)); };
     document.querySelector('#btnHoje').onclick = async () => { const m = yyyymm(new Date()); await loadMonth(m); setMonth(m); };
@@ -833,14 +822,39 @@
     // ===== Config ===== //
     function loadCfgUI(){ document.querySelector('#cfgMoeda').value = `${cfg.locale}|${cfg.currency}`; document.querySelector('#cfgCategorias').value = cfg.categorias; }
     document.querySelector('#btnSalvarCfg').onclick = ()=>{ const [loc, cur] = document.querySelector('#cfgMoeda').value.split('|'); cfg.locale = loc; cfg.currency = cur; cfg.categorias = document.querySelector('#cfgCategorias').value.trim(); scheduleSave(); atualizarDatalistCategorias(); renderAll(); alert('Configurações salvas.'); }
-    document.querySelector('#btnResetar').onclick = ()=>{ if(!confirm('Isso apagará os dados locais deste navegador. Os dados no Firebase permanecem. Continuar?')) return; localStorage.clear(); location.reload(); }
+    document.querySelector('#btnResetar').onclick = async () => {
+      if(!state.uid){
+        alert('Faça login para gerenciar seus dados.');
+        return;
+      }
+      if(!confirm('Isso removerá todos os dados salvos no Firestore para esta conta. Deseja continuar?')) return;
+      try {
+        const userDoc = doc(db, FIRESTORE_ROOT, state.uid);
+        const mesesSnap = await getDocs(collection(userDoc, 'meses'));
+        await Promise.all(mesesSnap.docs.map((d) => deleteDoc(d.ref)));
+        await deleteDoc(docCfg()).catch(() => {});
+        resetData();
+        Object.assign(cfg, cfgDefaults);
+        state.contas[state.month] = [];
+        state.receitas[state.month] = [];
+        state.orcamentos[state.month] = [];
+        await saveConfig();
+        await saveMonth();
+        atualizarDatalistCategorias();
+        loadCfgUI();
+        setMonth(state.month);
+        alert('Dados resetados com sucesso.');
+      } catch (err) {
+        console.error('Erro ao resetar dados', err);
+        alert('Não foi possível resetar os dados. Tente novamente.');
+      }
+    }
 
     // ===== Recorrentes ===== //
     function gerarRecorrentesDoMes(){ const mm = state.month; const list = monthContas(); const faltantes = []; for(const modelo of state.recorrentes){ const ja = list.some(c => c._modeloId === modelo.id || (c.descricao===modelo.descricao && c.vencimento.slice(0,7)===mm)); if(!ja){ list.push({ id: crypto.randomUUID(), descricao: modelo.descricao, categoria: modelo.categoria, vencimento: `${mm}-${String(modelo.dia).padStart(2,'0')}`, valor: modelo.valor, pago: false, recorrente: true, _modeloId: modelo.id }); faltantes.push(modelo.descricao); } } if(faltantes.length) { scheduleSave(); renderAll(); alert('Recorrentes adicionadas: '+faltantes.join(', ')); } else alert('Nenhuma recorrente pendente para gerar.'); }
     document.querySelector('#btnGerarRecorrentes').onclick = gerarRecorrentesDoMes;
 
     // ===== Inicialização e Auth ===== //
-    let unsubscribeMonth = null;
     let startAppPromise = null;
 
     function resetData(){
@@ -848,65 +862,38 @@
       state.receitas = {};
       state.orcamentos = {};
       state.recorrentes = [];
+      subscribedMonth = null;
     }
 
     async function startApp(user){
+      if(!user) return;
       if(startAppPromise) return startAppPromise;
       startAppPromise = (async () => {
+        unsubscribeMonth?.();
+        unsubscribeMonth = null;
+        subscribedMonth = null;
         resetData();
+        state.uid = user.uid;
+        Object.assign(cfg, cfgDefaults);
         const initialMonth = yyyymm(new Date());
         state.month = initialMonth;
-        let firebaseOk = useFirebase && !!user;
-        if(firebaseOk){
-          state.uid = user.uid;
-          try {
-            await loadConfig();
-            await loadMonth(initialMonth);
-            unsubscribeMonth?.();
-            unsubscribeMonth = onSnapshot(
-              docMonth(initialMonth),
-              (snap) => {
-                if(!snap.exists()) return;
-                const d = snap.data();
-                state.contas[initialMonth] = d.contas || [];
-                state.receitas[initialMonth] = d.receitas || [];
-                state.orcamentos[initialMonth] = d.orcamentos || [];
-                state.recorrentes = d.recorrentes || state.recorrentes;
-                renderAll();
-              },
-              (error) => console.error('Erro ao sincronizar mês no Firestore.', error)
-            );
-          } catch (err) {
-            console.warn('Firebase indisponível, usando armazenamento local.', err);
-            firebaseOk = false;
-            useFirebase = false;
-            state.uid = 'local';
-            unsubscribeMonth?.();
-            unsubscribeMonth = null;
-            await loadConfig();
-            await loadMonth(initialMonth);
-          }
-        } else {
-          useFirebase = false;
-          state.uid = 'local';
-          unsubscribeMonth?.();
-          unsubscribeMonth = null;
+        try {
           await loadConfig();
-          await loadMonth(initialMonth);
+        } catch (err) {
+          console.error('Erro ao carregar configurações do usuário.', err);
         }
-
+        try {
+          await loadMonth(initialMonth);
+        } catch (err) {
+          console.error('Erro ao carregar dados do mês inicial.', err);
+        }
         document.querySelector('#relIni').value = initialMonth;
         document.querySelector('#relFim').value = initialMonth;
-        setMonth(initialMonth);
+        atualizarDatalistCategorias();
         loadCfgUI();
+        setMonth(initialMonth);
         activateTab('dashboard');
-
-        if(firebaseOk){
-          hideOfflineBanner();
-        } else {
-          showOfflineBanner();
-        }
-        updateUserBox(firebaseOk ? user : null);
+        updateUserBox(user);
         hideAuthOverlay();
       })();
 
@@ -917,42 +904,26 @@
       }
     }
 
-    btnOffline?.addEventListener('click', async () => {
-      if(authMessage) authMessage.textContent = '';
-      useFirebase = false;
-      setAuthLoading(true);
-      try {
-        await startApp(null);
-      } catch (err) {
-        console.error('Erro ao iniciar modo offline', err);
-        if(authMessage) authMessage.textContent = 'Não foi possível iniciar no modo offline.';
-      } finally {
-        setAuthLoading(false);
-        updateAuthMode();
-      }
-    });
-
     onAuthStateChanged(auth, async (user) => {
       if(user){
-        useFirebase = true;
         if(authMessage) authMessage.textContent = '';
         await startApp(user);
       } else {
         unsubscribeMonth?.();
         unsubscribeMonth = null;
-        showAuthOverlay();
+        subscribedMonth = null;
         state.uid = null;
+        Object.assign(cfg, cfgDefaults);
         resetData();
         state.month = yyyymm(new Date());
         document.querySelector('#relIni').value = state.month;
         document.querySelector('#relFim').value = state.month;
+        atualizarDatalistCategorias();
+        loadCfgUI();
         setMonth(state.month);
+        activateTab('dashboard');
         updateUserBox(null);
-        if(useFirebase){
-          hideOfflineBanner();
-        } else {
-          showOfflineBanner();
-        }
+        showAuthOverlay();
       }
     });
   </script>
